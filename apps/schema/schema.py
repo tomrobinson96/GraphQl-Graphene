@@ -1,5 +1,6 @@
 from graphene_django import DjangoObjectType
 import graphene
+from django.utils import timezone
 from apps.users.models import User 
 from apps.decks.models import Deck as DeckModel
 from apps.cards.models import Card as CardModel
@@ -8,6 +9,18 @@ from apps.decks.schema import (
     DeckType,
     CreateDeck
 )
+
+buckets = (
+        (1, 1),
+        (2, 3),
+        (3, 7),
+        (4, 16),
+        (5, 30),
+    )
+
+def return_date_time(days):
+  now = timezone.now()
+  return now + timezone.timedelta(days=days)
 
 class UserType(DjangoObjectType):
     class Meta:
@@ -20,7 +33,39 @@ class Deck(DjangoObjectType):
 class Card(DjangoObjectType):
   class Meta:
         model = CardModel
-        #feilds = ("deck",)
+
+class UpdateCard(graphene.Mutation):
+  card = graphene.Field(Card)
+
+  class Arguments:
+    id = graphene.ID()
+    question = graphene.String()
+    answer = graphene.String()
+    # easy, average, dificult. Moving buckets/date in future when they are reviewed
+    status = graphene.Int()
+
+  def mutate(self, info, id, question, answer, status):
+    c = CardModel.objects.get(id=id)
+    bucket = c.bucket
+
+    if status == 1 and bucket > 1:
+      bucket -= 1
+    elif status == 3 and bucket <= 4:
+      bucket += 1
+
+    # Calc next review at date
+    days = buckets[bucket-1][1]
+    next_review_at = return_date_time(days)
+
+    
+    c.question = question
+    c.answer = answer
+    c.bucket = bucket
+    c.next_review_at = next_review_at
+    c.last_reviewed_at = timezone.now()
+    c.save()
+    
+    return UpdateCard(card=c)
 
 class CreateDeck(graphene.Mutation):
     deck = graphene.Field(Deck)
@@ -52,11 +97,12 @@ class CreateCard(graphene.Mutation):
 class Mutation(graphene.ObjectType):
     create_card = CreateCard.Field()
     create_deck = CreateDeck.Field()
+    update_card = UpdateCard.Field()
 
 class Query(graphene.ObjectType):
     users = graphene.List(UserType)
     decks = graphene.List(DeckType)
-    decks_by_id = graphene.Field(DeckType, id=graphene.Int())
+    deck_by_id = graphene.Field(DeckType, id=graphene.Int())
     cards = graphene.List(Card)
     deck_cards = graphene.List(Card, deck = graphene.Int())
 
